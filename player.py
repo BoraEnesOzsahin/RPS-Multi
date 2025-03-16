@@ -1,5 +1,5 @@
 class Player:
-    def __init__(self,name):
+    def __init__(self, name):
         self.name = name
         self.games_played = 0
         self.games_won = 0
@@ -16,5 +16,3 @@ class Player:
             self.win_ratio = self.games_won / self.games_played
         else:
             self.win_ratio = 0.0
-
-            

@@ -31,7 +31,11 @@ class Client:
                     print("Disconnected from server.")
                     self.socket.close()
                     os._exit(0)  # Exit the program
-                self.socket.send(f"{self.player.name}: {message}".encode())  # Send player name with message
+                elif message.lower().startswith("challenge"):
+                    # Ensure the challenge message is valid
+                    self.socket.send(message.encode())  # Send challenge message to server
+                else:
+                    self.socket.send(f"{self.player.name}: {message}".encode())  # Send player name with message
             except:
                 break
 
@@ -62,12 +66,12 @@ class Client:
         table = PrettyTable()
 
         # Set column headers
-        table.field_names = ["Name", "Games Played", "Games Won", "Win Ratio"]
+        table.field_names = ["#", "Name", "Games Played", "Games Won", "Win Ratio"]
 
         # Add rows with player stats, excluding the client's own data
-        for stat in stats:
+        for idx, stat in enumerate(stats):
             if stat[0] != self.player.name:  # Exclude the current player's stats
-                table.add_row(stat)
+                table.add_row([idx + 1] + stat)  # Add sequence number to the row
 
         # Print the table
         print("\nUpdated Player Stats (excluding yourself):")
