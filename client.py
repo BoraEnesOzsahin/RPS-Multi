@@ -2,6 +2,7 @@ import socket
 from threading import Thread
 import os
 from player import Player  # Import the Player class
+from prettytable import PrettyTable  # Import PrettyTable for displaying stats
 
 class Client:
     def __init__(self, HOST, PORT):
@@ -42,12 +43,35 @@ class Client:
                 if not message:
                     break
                 print("\033[1;34;40m" + message + "\033[0m")  # Blue text
+                
+                # If the message contains player stats, display them
+                try:
+                    stats = eval(message)  # Convert string back to list of stats
+                    self.display_player_stats(stats)  # Display the stats excluding the client's own
+                except:
+                    pass
             except:
                 break
 
         print("Disconnected from server.")
         self.socket.close()
         os._exit(0)
+
+    def display_player_stats(self, stats):
+        """Display player stats in a table format excluding the client's own stats."""
+        table = PrettyTable()
+
+        # Set column headers
+        table.field_names = ["Name", "Games Played", "Games Won", "Win Ratio"]
+
+        # Add rows with player stats, excluding the client's own data
+        for stat in stats:
+            if stat[0] != self.player.name:  # Exclude the current player's stats
+                table.add_row(stat)
+
+        # Print the table
+        print("\nUpdated Player Stats (excluding yourself):")
+        print(table)
 
 # Start the client
 Client('127.0.0.1', 7632)

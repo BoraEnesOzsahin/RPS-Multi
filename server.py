@@ -28,8 +28,8 @@ class Server:
             self.clients.append(client_socket)
             print(f"Connection from: {address} as {nickname}")
 
-            # Print the updated player stats in a table
-            self.display_player_stats()
+            # Send the updated player stats to all clients
+            self.send_player_stats()
 
             # Start a new thread to handle the client
             threading.Thread(target=self.talk_to_client, args=(client_socket, player)).start()
@@ -58,8 +58,8 @@ class Server:
         self.players.remove(player)
         client_socket.close()
 
-        # Print the updated player stats in a table after disconnection
-        self.display_player_stats()
+        # Send the updated player stats after disconnection
+        self.send_player_stats()
 
     def broadcast(self, message, nickname, sender_socket):
         """Send message to all clients except the sender."""
@@ -70,20 +70,18 @@ class Server:
                 except:
                     self.clients.remove(client)
 
-    def display_player_stats(self):
-        """Displays the stats of all players in a table."""
-        table = PrettyTable()
-
-        # Set column headers
-        table.field_names = ["Name", "Games Played", "Games Won", "Win Ratio"]
-
-        # Add rows with player stats
+    def send_player_stats(self):
+        """Send the stats of all players (excluding themselves) to all clients."""
+        stats = []
         for player in self.players:
-            table.add_row([player.name, player.games_played, player.games_won, round(player.win_ratio, 2)])
+            stats.append([player.name, player.games_played, player.games_won, round(player.win_ratio, 2)])
 
-        # Print the table
-        print("\nPlayer Stats:")
-        print(table)
+        # Send the player stats to all connected clients
+        for client_socket in self.clients:
+            try:
+                client_socket.send(str(stats).encode())  # Send stats as a string
+            except:
+                pass
 
 # Start the server
 Server('127.0.0.1', 7632)
