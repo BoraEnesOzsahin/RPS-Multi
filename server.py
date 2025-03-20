@@ -1,107 +1,130 @@
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QPushButton, QListWidget, QLabel
+from PyQt5.QtCore import QThread, pyqtSignal
 import socket
-from threading import Thread
-from player import Player
+import sys
+import threading
 
-class Server:
-    def __init__(self, HOST, PORT):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind((HOST, PORT))
-        self.socket.listen()
+class ServerListener(QThread):
+    message_received = pyqtSignal(str)
 
-        self.clients = {}  # Store client sockets mapped to player objects
-        print("Server waiting for connections...")
+    def __init__(self, client_socket, server):
+        super().__init__()
+        self.client_socket = client_socket
+        self.server = server
+        self.running = True
 
-        # Accept multiple clients
-        self.accept_clients()
-
-    def accept_clients(self):
-        """Accept new clients and start a thread for each."""
-        while True:
-            client_socket, address = self.socket.accept()
-            print(f"Connection from: {address}")
-
-            # Get the player's name from the client
-            client_socket.send("Enter your name: ".encode())
-            player_name = client_socket.recv(1024).decode().strip()
-
-            if not player_name:
-                client_socket.close()
-                continue
-
-            # Create Player object
-            player = Player(player_name)
-            
-            # Store the client and associated player
-            self.clients[client_socket] = player
-
-            print(f"{player_name} has joined.")
-            self.send_player_stats()
-
-            # Start a new thread for the client
-            Thread(target=self.handle_client, args=(client_socket, player), daemon=True).start()
-
-    def handle_client(self, client_socket, player):
-        """Handle communication with a client."""
-        while True:
+    def run(self):
+        while self.running:
             try:
-                message = client_socket.recv(1024).decode()
-                if not message.strip():
-                    break  # Client disconnected
-
-                print(f"{player.name}: {message}")
-
-                if message.lower().startswith("challenge"):
-                    self.handle_challenge(client_socket, message, player)
-                else:
-                    self.broadcast(message, player.name, client_socket)
-
-            except Exception as e:
-                print(f"Error: {e}")
+                message = self.client_socket.recv(1024).decode()
+                if not message:
+                    break
+                self.message_received.emit(message)
+                self.server.handle_message(message, self.client_socket)
+            except:
                 break
 
-        # Remove disconnected client
-        print(f"{player.name} disconnected.")
-        del self.clients[client_socket]
-        client_socket.close()
+    def stop(self):
+        self.running = False
+        self.quit()
 
-        # Update player stats for remaining clients
-        self.send_player_stats()
+class ServerGUI(QWidget):
+    def __init__(self, host, port):
+        super().__init__()
+        self.setWindowTitle("Multiplayer Server")
+        self.setGeometry(100, 100, 500, 600)
+        self.clients = []
+        self.nicknames = {}
+        self.challenges = {}
+        self.choices = {}
 
-    def send_player_stats(self):
-        """Send player stats to all clients."""
-        stats = [[p.name, p.games_played, p.games_won, p.win_ratio] for p in self.clients.values()]
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind((host, port))
+        self.server_socket.listen()
 
-        for client_socket in self.clients:
-            filtered_stats = [stat for stat in stats if stat[0] != self.clients[client_socket].name]  # Exclude self
-            client_socket.send(str(filtered_stats).encode())
+        self.init_ui()
 
-    def handle_challenge(self, client_socket, message, player):
-        """Handle player challenge requests."""
-        parts = message.split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            client_socket.send("Invalid challenge format. Use: challenge <number>\n".encode())
-            return
+        threading.Thread(target=self.accept_clients, daemon=True).start()
 
-        target_index = int(parts[1]) - 1  # Convert to zero-based index
-        players_list = list(self.clients.values())
+    def init_ui(self):
+        layout = QVBoxLayout()
 
-        if target_index < 0 or target_index >= len(players_list):
-            client_socket.send("Invalid player number.\n".encode())
-            return
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        layout.addWidget(QLabel("Server Log:"))
+        layout.addWidget(self.chat_display)
 
-        target_player = players_list[target_index]
+        self.player_list = QListWidget()
+        layout.addWidget(QLabel("Connected Players:"))
+        layout.addWidget(self.player_list)
 
-        if target_player.name == player.name:
-            client_socket.send("You cannot challenge yourself!\n".encode())
-            return
+        self.setLayout(layout)
 
-        # Notify both players about the challenge
-        for sock, p in self.clients.items():
-            if p == target_player:
-                sock.send(f"You have been challenged by {player.name}!\n".encode())
-                client_socket.send(f"You have challenged {target_player.name}!\n".encode())
-                return
+    def accept_clients(self):
+        while True:
+            client_socket, address = self.server_socket.accept()
+            nickname = client_socket.recv(1024).decode()
+            self.nicknames[client_socket] = nickname
+            self.clients.append(client_socket)
 
+            self.update_player_list()
+            self.display_message(f"{nickname} has connected.")
 
-# Start the server
-Server('127.0.0.1', 7632)
+            listener = ServerListener(client_socket, self)
+            listener.message_received.connect(self.display_message)
+            listener.start()
+
+    def display_message(self, message):
+        self.chat_display.append(message)
+
+    def update_player_list(self):
+        self.player_list.clear()
+        for nickname in self.nicknames.values():
+            self.player_list.addItem(nickname)
+
+    def handle_message(self, message, sender_socket):
+        if message.startswith("challenge"):
+            challenger_nickname = self.nicknames[sender_socket]
+            target_nickname = message.split()[1]
+            target_socket = next((c for c, n in self.nicknames.items() if n == target_nickname), None)
+            
+            if target_socket:
+                self.challenges[sender_socket] = target_socket
+                self.challenges[target_socket] = sender_socket
+                self.send_to_client(sender_socket, f"Challenge sent to {target_nickname}!")
+                self.send_to_client(target_socket, f"You have been challenged by {challenger_nickname}. Choose Rock, Paper, or Scissors.")
+            else:
+                self.send_to_client(sender_socket, f"Player {target_nickname} not found!")
+
+        elif message in ["rock", "paper", "scissors"]:
+            self.choices[sender_socket] = message
+            if sender_socket in self.challenges and self.challenges[sender_socket] in self.choices:
+                self.determine_winner(sender_socket, self.challenges[sender_socket])
+        else:
+            self.broadcast(message, sender_socket)
+
+    def determine_winner(self, player1, player2):
+        choice1, choice2 = self.choices[player1], self.choices[player2]
+        result = "It's a draw!" if choice1 == choice2 else (
+            f"{self.nicknames[player1]} wins!" if (choice1, choice2) in [("rock", "scissors"), ("scissors", "paper"), ("paper", "rock")] else f"{self.nicknames[player2]} wins!"
+        )
+
+        self.send_to_client(player1, result)
+        self.send_to_client(player2, result)
+
+        del self.challenges[player1], self.challenges[player2], self.choices[player1], self.choices[player2]
+
+    def send_to_client(self, client, message):
+        client.send(message.encode())
+
+    def broadcast(self, message, sender_socket):
+        for client in self.clients:
+            if client != sender_socket:
+                client.send(message.encode())
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    server = ServerGUI("127.0.0.1", 7640)
+    server.show()
+    sys.exit(app.exec_())
