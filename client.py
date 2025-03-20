@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QPushButton, QLabel, QInputDialog
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QPushButton, QLabel, QInputDialog, QListWidget
 from PyQt5.QtCore import QThread, pyqtSignal
 import socket
 import sys
@@ -6,17 +6,23 @@ import sys
 class ClientListener(QThread):
     message_received = pyqtSignal(str)
 
-    def __init__(self, client_socket):
+    def __init__(self, client_socket, client_gui):
         super().__init__()
         self.client_socket = client_socket
+        self.client_gui = client_gui
         self.running = True
 
     def run(self):
         while self.running:
             try:
-                message = self.client_socket.recv(1024).decode()
+                message = self.client_socket.recv(1024).decode(errors='ignore').strip()
                 if message:
-                    self.message_received.emit(message)
+                    if message.startswith("Players:"):
+                        player_data = message.replace("Players:", "").strip()  # Remove "Players:" safely
+                        player_list = list(set(p.strip() for p in player_data.split("\n") if p.strip()))  # Ensure unique names
+                        self.client_gui.update_player_list(player_list)
+                    else:
+                        self.message_received.emit(message)
             except:
                 break
 
@@ -38,7 +44,7 @@ class ClientGUI(QWidget):
         
         self.init_ui()
         
-        self.listener = ClientListener(self.client_socket)
+        self.listener = ClientListener(self.client_socket, self)
         self.listener.message_received.connect(self.display_message)
         self.listener.start()
 
@@ -53,26 +59,37 @@ class ClientGUI(QWidget):
         self.chat_input.returnPressed.connect(self.send_message)
         layout.addWidget(self.chat_input)
 
+        self.player_list = QListWidget()
+        layout.addWidget(QLabel("Connected Players:"))
+        layout.addWidget(self.player_list)
+        
         self.setLayout(layout)
 
     def get_nickname(self):
         nickname, ok = QInputDialog.getText(self, "Enter Name", "Your Name:")
         if ok and nickname:
-            self.nickname = nickname
-            self.client_socket.send(nickname.encode())
+            self.nickname = nickname.strip()
+            self.client_socket.send(self.nickname.encode())
         else:
             self.close()
 
     def display_message(self, message):
-        self.chat_display.append(message)
+        if not message.startswith("Players:"):
+            self.chat_display.append(message)
 
     def send_message(self):
         message = self.chat_input.text()
         if message:
             formatted_message = f"{self.nickname}: {message}"
             self.client_socket.send(formatted_message.encode())
-            self.display_message(formatted_message)
+            self.display_message(formatted_message)  # Show sent message to sender
             self.chat_input.clear()
+
+    def update_player_list(self, player_names):
+        self.player_list.clear()
+        for player in sorted(player_names):  # Sorting to maintain consistent order
+            if player and player != self.nickname:  # Exclude self from player list
+                self.player_list.addItem(player)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

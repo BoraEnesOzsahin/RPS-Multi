@@ -16,11 +16,10 @@ class ServerListener(QThread):
     def run(self):
         while self.running:
             try:
-                message = self.client_socket.recv(1024).decode()
-                if not message:
-                    break
-                self.message_received.emit(message)
-                self.server.handle_message(message, self.client_socket)
+                message = self.client_socket.recv(1024).decode().strip()
+                if message:
+                    self.message_received.emit(message)
+                    self.server.handle_message(message, self.client_socket)
             except:
                 break
 
@@ -64,12 +63,14 @@ class ServerGUI(QWidget):
     def accept_clients(self):
         while True:
             client_socket, address = self.server_socket.accept()
-            nickname = client_socket.recv(1024).decode()
-            self.nicknames[client_socket] = nickname
-            self.clients.append(client_socket)
+            nickname = client_socket.recv(1024).decode().strip()
+            if client_socket not in self.nicknames:
+                self.nicknames[client_socket] = nickname
+                self.clients.append(client_socket)
 
             self.update_player_list()
             self.display_message(f"{nickname} has connected.")
+            self.broadcast_player_list()
 
             listener = ServerListener(client_socket, self)
             listener.message_received.connect(self.display_message)
@@ -80,48 +81,39 @@ class ServerGUI(QWidget):
 
     def update_player_list(self):
         self.player_list.clear()
-        for nickname in self.nicknames.values():
+        unique_players = sorted(set(self.nicknames.values()))  # Ensure uniqueness
+        for nickname in unique_players:
             self.player_list.addItem(nickname)
+        self.broadcast_player_list()
+
+    def broadcast_player_list(self):
+        unique_players = sorted(set(self.nicknames.values()))  # Avoid duplicates
+        player_list = "Players:\n" + "\n".join(unique_players)
+        for client in self.clients:
+            try:
+                client.send(player_list.encode())
+            except:
+                self.remove_client(client)
 
     def handle_message(self, message, sender_socket):
-        if message.startswith("challenge"):
-            challenger_nickname = self.nicknames[sender_socket]
-            target_nickname = message.split()[1]
-            target_socket = next((c for c, n in self.nicknames.items() if n == target_nickname), None)
-            
-            if target_socket:
-                self.challenges[sender_socket] = target_socket
-                self.challenges[target_socket] = sender_socket
-                self.send_to_client(sender_socket, f"Challenge sent to {target_nickname}!")
-                self.send_to_client(target_socket, f"You have been challenged by {challenger_nickname}. Choose Rock, Paper, or Scissors.")
-            else:
-                self.send_to_client(sender_socket, f"Player {target_nickname} not found!")
-
-        elif message in ["rock", "paper", "scissors"]:
-            self.choices[sender_socket] = message
-            if sender_socket in self.challenges and self.challenges[sender_socket] in self.choices:
-                self.determine_winner(sender_socket, self.challenges[sender_socket])
-        else:
-            self.broadcast(message, sender_socket)
-
-    def determine_winner(self, player1, player2):
-        choice1, choice2 = self.choices[player1], self.choices[player2]
-        result = "It's a draw!" if choice1 == choice2 else (
-            f"{self.nicknames[player1]} wins!" if (choice1, choice2) in [("rock", "scissors"), ("scissors", "paper"), ("paper", "rock")] else f"{self.nicknames[player2]} wins!"
-        )
-
-        self.send_to_client(player1, result)
-        self.send_to_client(player2, result)
-
-        del self.challenges[player1], self.challenges[player2], self.choices[player1], self.choices[player2]
-
-    def send_to_client(self, client, message):
-        client.send(message.encode())
+        self.broadcast(message, sender_socket)
 
     def broadcast(self, message, sender_socket):
         for client in self.clients:
             if client != sender_socket:
-                client.send(message.encode())
+                try:
+                    client.send(message.encode())
+                except:
+                    self.remove_client(client)
+    
+    def remove_client(self, client_socket):
+        if client_socket in self.clients:
+            nickname = self.nicknames.get(client_socket, "Unknown")
+            self.clients.remove(client_socket)
+            del self.nicknames[client_socket]
+            self.update_player_list()
+            client_socket.close()
+            self.display_message(f"{nickname} has disconnected.")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
