@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QPushButton, QLabel, QInputDialog, QListWidget
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QPushButton, QListWidget, QLabel, QInputDialog
 from PyQt5.QtCore import QThread, pyqtSignal
 import socket
 import sys
@@ -34,7 +34,7 @@ class ClientGUI(QWidget):
     def __init__(self, host, port):
         super().__init__()
         self.setWindowTitle("Multiplayer Chat & Game")
-        self.setGeometry(100, 100, 500, 600)
+        self.setGeometry(100, 100, 500, 650)
 
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect((host, port))
@@ -60,8 +60,12 @@ class ClientGUI(QWidget):
         layout.addWidget(self.chat_input)
 
         self.player_list = QListWidget()
-        layout.addWidget(QLabel("Connected Players:"))
+        layout.addWidget(QLabel("Connected Players & Stats:"))
         layout.addWidget(self.player_list)
+        
+        self.challenge_button = QPushButton("Challenge")
+        self.challenge_button.clicked.connect(self.send_challenge)
+        layout.addWidget(self.challenge_button)
         
         self.setLayout(layout)
 
@@ -88,8 +92,17 @@ class ClientGUI(QWidget):
     def update_player_list(self, player_names):
         self.player_list.clear()
         for player in sorted(player_names):  # Sorting to maintain consistent order
-            if player and player != self.nickname:  # Exclude self from player list
+            if self.nickname not in player:  # Exclude the current client
                 self.player_list.addItem(player)
+
+    def send_challenge(self):
+        selected_player = self.player_list.currentItem()
+        if selected_player:
+            challenge_message = f"challenge {selected_player.text().split('-')[0].strip()}"  # Extract name only
+            self.client_socket.send(challenge_message.encode())
+            self.display_message(f"You challenged {selected_player.text().split('-')[0].strip()}!")
+        else:
+            self.display_message("Select a player to challenge!")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

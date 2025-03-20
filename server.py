@@ -3,6 +3,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 import socket
 import sys
 import threading
+from player import Player
 
 class ServerListener(QThread):
     message_received = pyqtSignal(str)
@@ -33,9 +34,7 @@ class ServerGUI(QWidget):
         self.setWindowTitle("Multiplayer Server")
         self.setGeometry(100, 100, 500, 600)
         self.clients = []
-        self.nicknames = {}
-        self.challenges = {}
-        self.choices = {}
+        self.players = {}  # Dictionary to track Player objects
 
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -55,7 +54,7 @@ class ServerGUI(QWidget):
         layout.addWidget(self.chat_display)
 
         self.player_list = QListWidget()
-        layout.addWidget(QLabel("Connected Players:"))
+        layout.addWidget(QLabel("Connected Players & Stats:"))
         layout.addWidget(self.player_list)
 
         self.setLayout(layout)
@@ -64,8 +63,8 @@ class ServerGUI(QWidget):
         while True:
             client_socket, address = self.server_socket.accept()
             nickname = client_socket.recv(1024).decode().strip()
-            if client_socket not in self.nicknames:
-                self.nicknames[client_socket] = nickname
+            if client_socket not in self.players:
+                self.players[client_socket] = Player(nickname)  # Create Player instance
                 self.clients.append(client_socket)
 
             self.update_player_list()
@@ -81,13 +80,13 @@ class ServerGUI(QWidget):
 
     def update_player_list(self):
         self.player_list.clear()
-        unique_players = sorted(set(self.nicknames.values()))  # Ensure uniqueness
-        for nickname in unique_players:
-            self.player_list.addItem(nickname)
+        unique_players = sorted(set(f"{p.name} - Games: {p.games_played}, Wins: {p.games_won}, Win%: {p.win_ratio:.2f}" for p in self.players.values()))
+        for player_info in unique_players:
+            self.player_list.addItem(player_info)
         self.broadcast_player_list()
 
     def broadcast_player_list(self):
-        unique_players = sorted(set(self.nicknames.values()))  # Avoid duplicates
+        unique_players = sorted(set(f"{p.name} - Games: {p.games_played}, Wins: {p.games_won}, Win%: {p.win_ratio:.2f}" for p in self.players.values()))
         player_list = "Players:\n" + "\n".join(unique_players)
         for client in self.clients:
             try:
@@ -108,9 +107,9 @@ class ServerGUI(QWidget):
     
     def remove_client(self, client_socket):
         if client_socket in self.clients:
-            nickname = self.nicknames.get(client_socket, "Unknown")
+            nickname = self.players[client_socket].name if client_socket in self.players else "Unknown"
             self.clients.remove(client_socket)
-            del self.nicknames[client_socket]
+            del self.players[client_socket]
             self.update_player_list()
             client_socket.close()
             self.display_message(f"{nickname} has disconnected.")
