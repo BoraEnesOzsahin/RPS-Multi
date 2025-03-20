@@ -4,6 +4,7 @@ import socket
 import sys
 import threading
 from player import Player
+from game import RockPaperScissors
 
 class ServerListener(QThread):
     message_received = pyqtSignal(str)
@@ -35,6 +36,8 @@ class ServerGUI(QWidget):
         self.setGeometry(100, 100, 500, 600)
         self.clients = []
         self.players = {}  # Dictionary to track Player objects
+        self.challenges = {}  # Tracks ongoing challenges
+        self.choices = {}  # Stores choices (rock, paper, scissors)
 
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -95,16 +98,54 @@ class ServerGUI(QWidget):
                 self.remove_client(client)
 
     def handle_message(self, message, sender_socket):
-        self.broadcast(message, sender_socket)
+        if message.startswith("challenge"):
+            _, target_nickname, challenger_choice = message.split()
+            target_socket = next((c for c, p in self.players.items() if p.name == target_nickname), None)
 
-    def broadcast(self, message, sender_socket):
-        for client in self.clients:
-            if client != sender_socket:
-                try:
-                    client.send(message.encode())
-                except:
-                    self.remove_client(client)
-    
+            if target_socket:
+                self.challenges[sender_socket] = target_socket
+                self.challenges[target_socket] = sender_socket
+                self.choices[sender_socket] = challenger_choice  # Store challenger's move
+                self.send_to_client(target_socket, f"Challenge Received: {self.players[sender_socket].name}")  # Send message
+
+        elif message.startswith("choice"):
+            self.choices[sender_socket] = message.split()[1]
+            if sender_socket in self.challenges and self.challenges[sender_socket] in self.choices:
+                self.determine_winner(sender_socket, self.challenges[sender_socket])
+
+    def determine_winner(self, player1, player2):
+        choice1 = self.choices[player1]
+        choice2 = self.choices[player2]
+        winner = RockPaperScissors.determine_winner(choice1, choice2)
+
+        player1_name = self.players[player1].name
+        player2_name = self.players[player2].name
+
+        if winner == "draw":
+            result_message = f"Game Result: It's a draw! {player1_name} chose {choice1}, {player2_name} chose {choice2}."
+        elif winner == "player1":
+            result_message = f"Game Result: {player1_name} wins! {player1_name} chose {choice1}, {player2_name} chose {choice2}."
+            self.players[player1].add_game(won=True)
+            self.players[player2].add_game(won=False)
+        else:
+            result_message = f"Game Result: {player2_name} wins! {player1_name} chose {choice1}, {player2_name} chose {choice2}."
+            self.players[player1].add_game(won=False)
+            self.players[player2].add_game(won=True)
+
+        self.send_to_client(player1, result_message)
+        self.send_to_client(player2, result_message)
+
+        del self.challenges[player1], self.challenges[player2]
+        del self.choices[player1], self.choices[player2]
+
+        self.update_player_list()  # Update stats after the game
+
+    def send_to_client(self, client, message):
+        try:
+            client.send(message.encode())
+        except:
+            self.remove_client(client)
+
     def remove_client(self, client_socket):
         if client_socket in self.clients:
             nickname = self.players[client_socket].name if client_socket in self.players else "Unknown"
