@@ -7,7 +7,7 @@ from player import Player
 from game import RockPaperScissors
 
 class ServerListener(QThread):
-    message_received = pyqtSignal(str)
+    message_received = pyqtSignal(str, object)  # Now passes both message and sender socket
 
     def __init__(self, client_socket, server):
         super().__init__()
@@ -20,7 +20,7 @@ class ServerListener(QThread):
             try:
                 message = self.client_socket.recv(1024).decode().strip()
                 if message:
-                    self.message_received.emit(message)
+                    self.message_received.emit(message, self.client_socket)  # Pass both message and sender socket
                     self.server.handle_message(message, self.client_socket)
             except:
                 break
@@ -75,10 +75,17 @@ class ServerGUI(QWidget):
             self.broadcast_player_list()
 
             listener = ServerListener(client_socket, self)
-            listener.message_received.connect(self.display_message)
+            listener.message_received.connect(self.handle_chat_message)  # Handle chat messages
             listener.start()
 
+    def handle_chat_message(self, message, sender_socket):
+        """Handles and displays chat messages in the server log with sender names."""
+        sender_name = self.players[sender_socket].name if sender_socket in self.players else "Unknown"
+        formatted_message = f"{sender_name}: {message}"
+        self.display_message(formatted_message)  # Display formatted message in server log
+
     def display_message(self, message):
+        """Displays messages in the server log."""
         self.chat_display.append(message)
 
     def update_player_list(self):
