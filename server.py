@@ -33,6 +33,7 @@ class ServerListener(QThread):
 class ServerGUI(QWidget):
     def __init__(self, host, port):
         super().__init__()
+        self.busy_players = set()
         self.setWindowTitle("Multiplayer Server")
         self.setGeometry(100, 100, 500, 600)
         self.clients = []
@@ -111,10 +112,16 @@ class ServerGUI(QWidget):
             target_socket = next((c for c, p in self.players.items() if p.name == target_nickname), None)
 
             if target_socket:
-                self.challenges[sender_socket] = target_socket
-                self.challenges[target_socket] = sender_socket
-                self.choices[sender_socket] = challenger_choice  # Store challenger's move
-                self.send_to_client(target_socket, f"Challenge Received: {self.players[sender_socket].name}")  # Send message
+                if sender_socket in self.busy_players:
+                    self.send_to_client(sender_socket, "You're currently in a game and cannot challenge another player.")
+                elif target_socket in self.busy_players:
+                    self.send_to_client(sender_socket, f"{target_nickname} is currently busy in another game.")
+                else:
+                    self.busy_players.update({sender_socket, target_socket})
+                    self.challenges[sender_socket] = target_socket
+                    self.challenges[target_socket] = sender_socket
+                    self.choices[sender_socket] = challenger_choice
+                    self.send_to_client(target_socket, f"Challenge Received: {self.players[sender_socket].name}") # Send message
 
         elif message.startswith("choice"):
             self.choices[sender_socket] = message.split()[1]
@@ -136,12 +143,17 @@ class ServerGUI(QWidget):
                 self.send_to_client(sender_socket, result_message)
                 self.send_to_client(opponent_socket, result_message)
 
+                self.busy_players.discard(sender_socket)
+                self.busy_players.discard(opponent_socket)
+
                 del self.challenges[sender_socket]
                 del self.challenges[opponent_socket]
                 if sender_socket in self.choices:
                     del self.choices[sender_socket]
                 if opponent_socket in self.choices:
                     del self.choices[opponent_socket]
+
+
 
                 self.update_player_list()
 
@@ -172,6 +184,9 @@ class ServerGUI(QWidget):
         del self.challenges[player1], self.challenges[player2]
         del self.choices[player1], self.choices[player2]
 
+        self.busy_players.discard(player1)
+        self.busy_players.discard(player2)
+
         self.update_player_list()  # Update stats after the game
 
     def send_to_client(self, client, message):
@@ -184,8 +199,11 @@ class ServerGUI(QWidget):
     def remove_client(self, client_socket):
         if client_socket in self.clients:
             nickname = self.players[client_socket].name if client_socket in self.players else "Unknown"
+
             self.clients.remove(client_socket)
             del self.players[client_socket]
+            self.busy_players.discard(client_socket)
+            
             self.update_player_list()
             client_socket.close()
             self.display_message(f"{nickname} has disconnected.")
