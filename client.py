@@ -1,5 +1,5 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QPushButton, QListWidget, QLabel, QInputDialog, QComboBox
-from PyQt5.QtCore import QThread, pyqtSignal, Qt, QMetaObject, Q_ARG, pyqtSlot
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QPushButton, QListWidget, QLabel, QInputDialog, QComboBox, QMessageBox
+from PyQt5.QtCore import QThread, pyqtSignal, Qt, QMetaObject, Q_ARG, pyqtSlot, QTimer
 import socket
 import sys
 
@@ -23,16 +23,20 @@ class ClientListener(QThread):
                         self.client_gui.update_player_list(player_list)
                     elif message.startswith("Challenge Received"):
                         challenger = message.split(":")[1].strip()
-                        print(f"DEBUG: Received challenge from {challenger}")  # Debugging log
-                        # Ensure the UI updates correctly by forcing the pop-up to appear
-                        QMetaObject.invokeMethod(self.client_gui, "show_rps_selection", Qt.QueuedConnection, Q_ARG(str, challenger))
+                        QMetaObject.invokeMethod(self.client_gui, "handle_challenge_popup", Qt.QueuedConnection, Q_ARG(str, challenger))
                     elif message.startswith("Game Result"):
                         self.client_gui.display_message(message)
                     else:
                         self.message_received.emit(message)
+                else:
+                    raise ConnectionResetError("Disconnected from server")
             except Exception as e:
                 print(f"Listener Error: {e}")
+                self.client_gui.display_message("Disconnected from server.")
+                self.client_socket.close()
+                self.running = False
                 break
+
 
     def stop(self):
         self.running = False
@@ -53,9 +57,9 @@ class ClientGUI(QWidget):
 
         self.nickname = ""
         self.get_nickname()
-        
+
         self.init_ui()
-        
+
         self.listener = ClientListener(self.client_socket, self)
         self.listener.message_received.connect(self.display_message)
         self.listener.start()
@@ -79,18 +83,18 @@ class ClientGUI(QWidget):
         self.move_selector = QComboBox()
         self.move_selector.addItems(["Rock", "Paper", "Scissors"])
         layout.addWidget(self.move_selector)
-        
+
         self.challenge_button = QPushButton("Challenge")
         self.challenge_button.clicked.connect(self.send_challenge)
         layout.addWidget(self.challenge_button)
-        
+
         self.setLayout(layout)
 
     def get_nickname(self):
         nickname, ok = QInputDialog.getText(self, "Enter Name", "Your Name:")
         if ok and nickname:
             self.nickname = nickname.strip()
-            self.client_socket.send(self.nickname.encode())
+            self.client_socket.send((self.nickname + "\n").encode())
         else:
             print("No nickname provided. Exiting.")
             sys.exit()
@@ -103,7 +107,7 @@ class ClientGUI(QWidget):
         message = self.chat_input.text()
         if message:
             formatted_message = f"{self.nickname}: {message}"
-            self.client_socket.send(message.encode())
+            self.client_socket.send((message + "\n").encode())
             self.display_message(formatted_message)
             self.chat_input.clear()
 
@@ -118,21 +122,56 @@ class ClientGUI(QWidget):
         if selected_player:
             chosen_move = self.move_selector.currentText().lower()
             challenge_message = f"challenge {selected_player.text().split('-')[0].strip()} {chosen_move}"
-            self.client_socket.send(challenge_message.encode())
+            self.client_socket.send((challenge_message + "\n").encode())
             self.display_message(f"You challenged {selected_player.text().split('-')[0].strip()} with {chosen_move.capitalize()}!")
         else:
             self.display_message("Select a player to challenge!")
 
-    @pyqtSlot(str)  # Ensures the function is recognized as a callable slot
+    @pyqtSlot(str)
+    def handle_challenge_popup(self, challenger):
+        self.challenge_timer = QTimer(self)
+        self.challenge_timer.setSingleShot(True)
+        self.challenge_timer.timeout.connect(lambda: self.auto_decline_challenge(challenger))
+        self.challenge_timer.start(3000)
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Incoming Challenge")
+        msg_box.setText(f"{challenger} has challenged you! Accept?")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.buttonClicked.connect(lambda btn: self.process_challenge_response(btn, challenger))
+        msg_box.show()
+        self.challenge_box = msg_box
+
+    def process_challenge_response(self, button, challenger):
+        self.challenge_timer.stop()
+        if button.text() == "&Yes":
+            self.show_rps_selection(challenger)
+        else:
+            self.send_loss_notice()
+
+    def auto_decline_challenge(self, challenger):
+        if hasattr(self, 'challenge_box'):
+            self.challenge_box.close()
+        try:
+            self.send_loss_notice()
+            self.display_message("You did not respond in time. Challenge lost by default.")
+        except Exception as e:
+            self.display_message(f"Failed to send timeout loss: {e}")
+
+
+    def send_loss_notice(self):
+        try:
+            self.client_socket.send("loss\n".encode())
+        except Exception as e:
+            self.display_message(f"Error sending loss message: {e}")
+
+
     def show_rps_selection(self, challenger):
-        """ Displays a selection box for the challenged player to choose their move. """
-        print(f"DEBUG: Opening pop-up for challenge from {challenger}")  # Debugging log
         choice, ok = QInputDialog.getItem(self, "Rock-Paper-Scissors", 
                                           f"You've been challenged by {challenger}! Choose your move:", 
                                           ["Rock", "Paper", "Scissors"], 0, False)
         if ok and choice:
-            print(f"DEBUG: {self.nickname} chose {choice}")  # Debugging log
-            self.client_socket.send(f"choice {choice.lower()}".encode())
+            self.client_socket.send(f"choice {choice.lower()}\n".encode())
             self.display_message(f"You chose {choice}.")
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import threading
 from player import Player
 from game import RockPaperScissors
 
+
 class ServerListener(QThread):
     message_received = pyqtSignal(str, object)  # Now passes both message and sender socket
 
@@ -100,7 +101,7 @@ class ServerGUI(QWidget):
         player_list = "Players:\n" + "\n".join(unique_players)
         for client in self.clients:
             try:
-                client.send(player_list.encode())
+                client.send((player_list +"\n").encode())
             except:
                 self.remove_client(client)
 
@@ -119,6 +120,32 @@ class ServerGUI(QWidget):
             self.choices[sender_socket] = message.split()[1]
             if sender_socket in self.challenges and self.challenges[sender_socket] in self.choices:
                 self.determine_winner(sender_socket, self.challenges[sender_socket])
+
+
+        elif message == "loss":
+            if sender_socket in self.challenges:
+                opponent_socket = self.challenges[sender_socket]
+                loser_name = self.players[sender_socket].name
+                winner_name = self.players[opponent_socket].name
+
+                self.players[sender_socket].add_game(won=False)
+                self.players[opponent_socket].add_game(won=True)
+
+                result_message = f"Game Result: {winner_name} wins by forfeit! {loser_name} did not respond in time."
+
+                self.send_to_client(sender_socket, result_message)
+                self.send_to_client(opponent_socket, result_message)
+
+                del self.challenges[sender_socket]
+                del self.challenges[opponent_socket]
+                if sender_socket in self.choices:
+                    del self.choices[sender_socket]
+                if opponent_socket in self.choices:
+                    del self.choices[opponent_socket]
+
+                self.update_player_list()
+
+                    
 
     def determine_winner(self, player1, player2):
         choice1 = self.choices[player1]
@@ -149,9 +176,10 @@ class ServerGUI(QWidget):
 
     def send_to_client(self, client, message):
         try:
-            client.send(message.encode())
-        except:
-            self.remove_client(client)
+            client.send((message + "\n").encode())
+        except Exception as e:
+            print(f"[Warning] Failed to send message to {self.players.get(client, 'Unknown')}: {e}")
+
 
     def remove_client(self, client_socket):
         if client_socket in self.clients:
