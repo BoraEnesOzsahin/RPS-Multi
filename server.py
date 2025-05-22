@@ -90,11 +90,11 @@ class ServerGUI(QWidget):
         # Lookup the sender’s nickname (or “Unknown” if somehow missing)
         sender_name = self.players.get(sender_socket, Player("Unknown")).name
         formatted_message = f"{sender_name}: {message}"
-
-        # 1) Display in the server’s log
+    
+        # Display in the server’s log
         self.display_message(formatted_message)
 
-        # 2) Send to every other client
+        #Send to every other client
         for client in list(self.clients):
             if client is not sender_socket:
                 # Uses your existing helper to append newline and encode
